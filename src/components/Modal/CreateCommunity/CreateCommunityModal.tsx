@@ -18,6 +18,15 @@ import {
 import React, { useState } from 'react';
 import { BsFillEyeFill, BsFillPersonFill } from 'react-icons/bs';
 import { HiLockClosed } from 'react-icons/hi';
+import { auth, firestore } from '../../../firebase/clientApp';
+import {
+  doc,
+  getDoc,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+} from 'firebase/firestore';
+import { useAuthState } from 'react-firebase-hooks/auth';
 
 type CreateCommunityModalProps = {
   open: boolean;
@@ -28,15 +37,16 @@ const CreateCommunityModal: React.FC<CreateCommunityModalProps> = ({
   open,
   handleClose,
 }) => {
+  const [user] = useAuthState(auth);
   const [communityName, setCommunityName] = useState('');
   const [charsRemaining, setCharsRemaining] = useState(21);
   const [communityType, setCommunityType] = useState('public');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.value.length > 21) return;
-
     setCommunityName(event.target.value);
-
     setCharsRemaining(21 - event.target.value.length);
   };
 
@@ -45,6 +55,56 @@ const CreateCommunityModal: React.FC<CreateCommunityModalProps> = ({
   ) => {
     setCommunityType(event.target.name);
   };
+
+  const handleCreateCommunity = async () => {
+    if (error) setError('');
+    //varlidate the community
+    const format = /[ `!@#$%^&*()+\-=\[\]{};':"\\|,.<>\/?~]/;
+
+    if (format.test(communityName) || communityName.length < 3) {
+      setError(
+        'Community names must be between 3-21 characters, and can only contain letters, numbers, or underscores.'
+      );
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const communityDocRef = doc(firestore, 'communities', communityName);
+
+      await runTransaction(firestore, async (transaction) => {
+        // check if community already exists in db
+        const communityDoc = await transaction.get(communityDocRef);
+        if (communityDoc.exists()) {
+          throw new Error(
+            `申し訳ありません、r/${communityName}は既に使用されているため設定できません。別のコミュニティ名をお試しください。`
+          );
+        }
+
+        transaction.set(communityDocRef, {
+          creatorId: user?.uid,
+          createdAt: serverTimestamp(),
+          numberOfMembers: 1,
+          privacyType: communityType,
+        });
+
+        //create communitySnippet on user
+        transaction.set(
+          doc(firestore, `users/${user?.uid}/communitySnippets`, communityName),
+          {
+            communityId: communityName,
+            isModerator: true,
+          }
+        );
+      });
+    } catch (error: any) {
+      console.log('handleCreateCommunity error', error);
+      setError(error.message);
+    }
+    setLoading(false);
+  };
+
   return (
     <>
       <Modal isOpen={open} onClose={handleClose} size='xl'>
@@ -69,8 +129,8 @@ const CreateCommunityModal: React.FC<CreateCommunityModalProps> = ({
               </Text>
               <Text
                 position='relative'
-                top='28px'
-                left='3px'
+                top='29px'
+                left='7px'
                 width='20px'
                 color='gray.500'
               >
@@ -88,6 +148,9 @@ const CreateCommunityModal: React.FC<CreateCommunityModalProps> = ({
                 color={charsRemaining === 0 ? 'red' : 'gray.500'}
               >
                 {charsRemaining} characters remaining
+              </Text>
+              <Text fontSize='9pt' color='red' pt={1}>
+                {error}
               </Text>
               <Box mt={4} mb={4}>
                 <Text fontWeight={600} fontSize={15}>
@@ -162,7 +225,11 @@ const CreateCommunityModal: React.FC<CreateCommunityModalProps> = ({
             >
               Close
             </Button>
-            <Button height='30px' onClick={() => {}}>
+            <Button
+              height='30px'
+              onClick={handleCreateCommunity}
+              isLoading={loading}
+            >
               Ceate Community
             </Button>
           </ModalFooter>
